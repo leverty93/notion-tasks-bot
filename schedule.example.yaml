@@ -1,0 +1,50 @@
+# Пример расписания пар. Скопируй в schedule.yaml и впиши свои пары:
+#   cp schedule.example.yaml schedule.yaml
+# schedule.yaml в .gitignore — твоё расписание не попадает в репозиторий.
+# После правки перезапусти бота — файл читается при старте.
+#
+# Формат пары:
+#   - {slot: 1, name: Математика, kind: лек}
+#   - {slot: 1, name: Информатика, kind: пр, online: true}   # онлайн-пара
+# Пара, которая чередуется по неделям (А/Б берутся от WEEK_A_MONDAY в .env):
+#   - slot: 3
+#     А: {name: Химия, kind: лаб}
+#     Б: {name: Физика, kind: пр}
+# Если пара бывает только по одной неделе — просто не пиши вторую.
+
+# Время пар
+slots:
+  1: ["08:00", "09:35"]
+  2: ["09:50", "11:25"]
+  3: ["11:40", "13:15"]
+  4: ["13:40", "15:15"]
+  5: ["15:30", "17:05"]
+
+# Когда слать сводки
+summaries:
+  morning_before_first_min: 120     # за сколько минут до первой пары
+  morning_before_online_min: 30     # …если первая пара онлайн
+  morning_no_lessons: "10:00"       # Сб, Вс и дни без пар
+  evening: "22:30"
+
+week:
+  monday:
+    - {slot: 1, name: Математика, kind: лек}
+    - {slot: 2, name: Математика, kind: пр}
+
+  tuesday:
+    - {slot: 2, name: История, kind: лек}
+    - slot: 3
+      А: {name: Химия, kind: лаб}
+      Б: {name: Физика, kind: пр}
+
+  wednesday:
+    - {slot: 1, name: Информатика, kind: пр, online: true}
+
+  thursday:
+    - {slot: 3, name: Физика, kind: лек}
+    - {slot: 4, name: Английский язык}
+
+  friday: []
+  saturday: []
+  sunday: []

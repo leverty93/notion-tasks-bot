@@ -1,0 +1,21 @@
+# секреты и личное
+.env
+schedule.yaml
+.env.*
+!.env.example
+
+# окружение и кэши
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# логи
+*.log
+logs/
+
+# IDE / локальные настройки
+.vscode/
+.idea/
+.claude/
