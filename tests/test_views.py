@@ -93,8 +93,9 @@ def test_morning_summary(tasks: list[Task]) -> None:
     text = view.render()
     assert "🎓 пары" in text
     assert "Курсовая" in text                 # тройка
-    assert "Через 3 дня" in text              # дедлайн через 3 дня входит
-    assert "Через 5 дней" not in text         # через 5 — нет
+    assert "Через 3 дня" in text              # дедлайн через 3 дня входит в окно
+    assert "⏰ Дальше" in text                 # что идёт следом за окном
+    assert text.index("Через 3 дня") < text.index("Через 5 дней")
     assert "❗ Просрочено" in text and "Старый долг" in text
     assert len(view.tasks) == len(set(view.tasks))  # без дублей в нумерации
 
@@ -160,3 +161,21 @@ def test_evening_with_focus_but_no_deadlines_shows_nearest() -> None:
     text = formatters.evening_view(date(2026, 9, 20), items, _dt(date(2026, 9, 19), 22, 30), True, None).render()
     assert "Тройка" in text
     assert "Ближайшие дедлайны" in text and "Позже" in text
+
+
+def test_day_view_also_shows_what_comes_next(tasks: list[Task]) -> None:
+    """Есть дедлайн на сегодня — всё равно видно, что идёт дальше."""
+    d = date(2026, 9, 19)
+    text = formatters.day_view("📅", d, tasks, _dt(d, 8), True).render()
+    assert "Лаба по физике" in text            # сегодня
+    assert "⏰ Дальше" in text
+    assert "Через 3 дня" in text and "Через 5 дней" in text
+    assert "Старый долг" not in text           # просроченное сюда не попадает
+
+
+def test_no_later_block_when_nothing_ahead() -> None:
+    items = [Task("1", "Только сегодня", "Not started", due_date=date(2026, 9, 19))]
+    d = date(2026, 9, 19)
+    text = formatters.day_view("📅", d, items, _dt(d, 8), True).render()
+    assert "Только сегодня" in text
+    assert "Дальше" not in text

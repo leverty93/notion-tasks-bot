@@ -117,15 +117,22 @@ def add_deadlines(
     window: int = 0,
     header: str = "⏰ Дедлайны",
 ) -> None:
-    """Дедлайны дня (или окна в window дней). Если их нет — ближайшие будущие."""
+    """Дедлайны дня (или окна в window дней), а следом — что идёт дальше.
+
+    Если на сам день дедлайнов нет, показываем сразу ближайшие будущие.
+    """
     end = day + timedelta(days=window)
     on_day = selectors.due_between(tasks, day, end)
+    later = selectors.due_between(tasks, end + timedelta(days=1), date.max)[:NEAREST_LIMIT]
     if on_day:
         out.header(header)
         out.add(on_day, today)
+        if later:
+            out.header("⏰ Дальше")
+            out.add(later, today)
         return
     out.header("⏰ Ближайшие дедлайны")
-    out.add(selectors.due_between(tasks, end, date.max)[:NEAREST_LIMIT], today, empty="Дедлайнов нет")
+    out.add(later, today, empty="Дедлайнов нет")
 
 
 def deadlines_view(tasks: list[Task], now: datetime, days: int = 7) -> Numbered:
