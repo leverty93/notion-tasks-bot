@@ -10,6 +10,8 @@ from bot.schedule import Lesson
 
 WEEKDAYS = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
 NO_FOCUS = "Тройка не выбрана"
+NEAREST_LIMIT = 5        # сколько ближайших дедлайнов показывать, если на нужный день их нет
+MORNING_DEADLINE_DAYS = 3  # окно дедлайнов в утренней сводке
 
 
 def fmt_date(d: date) -> str:
@@ -103,9 +105,27 @@ def day_view(
     if has_focus_field:
         out.header("🎯 Тройка дня")
         out.add(selectors.focus_for(tasks, day), today, empty=NO_FOCUS)
-    out.header("⏰ Дедлайны")
-    out.add(selectors.due_on(tasks, day), today, empty="Дедлайнов нет")
+    add_deadlines(out, tasks, day, today)
     return out
+
+
+def add_deadlines(
+    out: "Numbered",
+    tasks: list[Task],
+    day: date,
+    today: date,
+    window: int = 0,
+    header: str = "⏰ Дедлайны",
+) -> None:
+    """Дедлайны дня (или окна в window дней). Если их нет — ближайшие будущие."""
+    end = day + timedelta(days=window)
+    on_day = selectors.due_between(tasks, day, end)
+    if on_day:
+        out.header(header)
+        out.add(on_day, today)
+        return
+    out.header("⏰ Ближайшие дедлайны")
+    out.add(selectors.due_between(tasks, end, date.max)[:NEAREST_LIMIT], today, empty="Дедлайнов нет")
 
 
 def deadlines_view(tasks: list[Task], now: datetime, days: int = 7) -> Numbered:
@@ -168,10 +188,6 @@ def lessons_block(lessons: list[Lesson], week_letter: str) -> str:
     return "\n".join(lines)
 
 
-MORNING_DEADLINE_DAYS = 3
-EVENING_NEAREST_LIMIT = 5
-
-
 def morning_view(
     day: date, tasks: list[Task], now: datetime, has_focus_field: bool, lessons: str | None
 ) -> Numbered:
@@ -185,11 +201,13 @@ def morning_view(
     if has_focus_field:
         out.header("🎯 Тройка дня")
         out.add(selectors.focus_for(tasks, day), today, empty=NO_FOCUS)
-    out.header(f"⏰ Дедлайны: сегодня и ближайшие {MORNING_DEADLINE_DAYS} дня")
-    out.add(
-        selectors.due_between(tasks, day, day + timedelta(days=MORNING_DEADLINE_DAYS)),
+    add_deadlines(
+        out,
+        tasks,
+        day,
         today,
-        empty="Дедлайнов нет",
+        window=MORNING_DEADLINE_DAYS,
+        header=f"⏰ Дедлайны: сегодня и ближайшие {MORNING_DEADLINE_DAYS} дня",
     )
     late = [t for t in selectors.overdue(tasks, now) if t.due_date and t.due_date < day]
     if late:
@@ -216,10 +234,9 @@ def evening_view(
         else:
             out.text("<i>Тройка на завтра не выбрана</i>")
     if has_focus_field and not focus:
-        nearest = selectors.due_between(tasks, day, date.max)[:EVENING_NEAREST_LIMIT]
+        nearest = selectors.due_between(tasks, day, date.max)[:NEAREST_LIMIT]
         out.header("⏰ Ближайшие дедлайны")
         out.add(nearest, today, empty="Дедлайнов нет")
     else:
-        out.header("⏰ Дедлайны завтра")
-        out.add(selectors.due_on(tasks, day), today, empty="Дедлайнов нет")
+        add_deadlines(out, tasks, day, today, header="⏰ Дедлайны завтра")
     return out

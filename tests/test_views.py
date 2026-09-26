@@ -117,3 +117,46 @@ def test_evening_summary_with_focus(tasks: list[Task]) -> None:
 def test_html_is_escaped() -> None:
     t = Task("x", "<b>Лаба</b> & отчёт", "Not started")
     assert "&lt;b&gt;Лаба&lt;/b&gt; &amp; отчёт" in formatters.task_line(1, t)
+
+
+# ---------- ближайшие дедлайны, если на день их нет ----------
+
+def test_day_view_without_deadlines_shows_nearest(tasks: list[Task]) -> None:
+    """20.09 дедлайнов нет → показываем ближайшие будущие, а не «Дедлайнов нет»."""
+    d = date(2026, 9, 20)
+    text = formatters.day_view("📅", d, tasks, _dt(d, 8), True).render()
+    assert "Ближайшие дедлайны" in text
+    assert "Через 3 дня" in text        # 22.09
+    assert "Дедлайнов нет" not in text
+    assert "Старый долг" not in text    # просроченное сюда не попадает
+
+
+def test_day_view_with_deadlines_keeps_day_block(tasks: list[Task]) -> None:
+    d = date(2026, 9, 19)
+    text = formatters.day_view("📅", d, tasks, _dt(d, 8), True).render()
+    assert "Лаба по физике" in text
+    assert "Ближайшие" not in text
+
+
+def test_day_view_no_deadlines_at_all() -> None:
+    only_open = [Task("1", "Без срока", "Not started")]
+    d = date(2026, 9, 20)
+    text = formatters.day_view("📅", d, only_open, _dt(d, 8), True).render()
+    assert "Дедлайнов нет" in text
+
+
+def test_morning_summary_without_window_deadlines_shows_nearest() -> None:
+    far = [Task("9", "Через 10 дней", "Not started", due_date=date(2026, 9, 30))]
+    d = date(2026, 9, 20)
+    text = formatters.morning_view(d, far, _dt(d, 10), True, None).render()
+    assert "Ближайшие дедлайны" in text and "Через 10 дней" in text
+
+
+def test_evening_with_focus_but_no_deadlines_shows_nearest() -> None:
+    items = [
+        Task("1", "Тройка", "Not started", focus_on=date(2026, 9, 20)),
+        Task("2", "Позже", "Not started", due_date=date(2026, 9, 25)),
+    ]
+    text = formatters.evening_view(date(2026, 9, 20), items, _dt(date(2026, 9, 19), 22, 30), True, None).render()
+    assert "Тройка" in text
+    assert "Ближайшие дедлайны" in text and "Позже" in text
