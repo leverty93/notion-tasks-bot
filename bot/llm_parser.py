@@ -6,7 +6,7 @@ import logging
 import re
 from datetime import date, datetime
 
-from openai import AsyncOpenAI, NotFoundError, OpenAIError, RateLimitError
+from openai import APIStatusError, AsyncOpenAI, NotFoundError, OpenAIError, RateLimitError
 from pydantic import BaseModel, ValidationError, field_validator
 
 from bot.config import TZ
@@ -184,8 +184,11 @@ class LLMParser:
                     response_format={"type": "json_object"},
                     temperature=0,
                 )
-            except (NotFoundError, RateLimitError) as e:
-                # Модель пропала или занята — пробуем следующую из списка.
+            except (NotFoundError, RateLimitError, APIStatusError) as e:
+                if e.status_code in (401, 403):  # дело не в модели — дальше нет смысла
+                    log.error("OpenRouter отклонил ключ: %s", e)
+                    raise LLMError("OpenRouter отклонил ключ — проверь OPENROUTER_API_KEY.") from e
+                # Модель пропала, занята или её провайдер лежит — пробуем следующую.
                 log.warning("Модель %s недоступна (%s), пробую следующую", model, type(e).__name__)
                 last = e
                 continue
@@ -193,15 +196,18 @@ class LLMParser:
                 log.error("Ошибка LLM (%s): %s: %s", model, type(e).__name__, e)
                 raise LLMError("LLM недоступна.") from e
 
+            # Перегруженный провайдер отдаёт ошибку внутри ответа (choices=None),
+            # без исключения — это тоже повод взять следующую модель.
             if not resp.choices or not resp.choices[0].message.content:
-                log.warning("Пустой ответ LLM (%s): %r", model, resp)
-                raise LLMError("LLM вернула пустой ответ.")
+                log.warning("Пустой ответ от %s: %r", model, getattr(resp, "error", None) or resp)
+                last = LLMError(f"пустой ответ от {model}")
+                continue
             if model != self.models[0]:
                 log.info("Ответила запасная модель %s", model)
             return validate_llm_json(resp.choices[0].message.content, categories, sections)
 
         log.error("Ни одна модель из LLM_MODEL не ответила: %s", ", ".join(self.models))
-        raise LLMError("Модель недоступна — проверь LLM_MODEL в .env.") from last
+        raise LLMError("Модели сейчас недоступны — попробуй ещё раз или проверь LLM_MODEL.") from last
 
     async def close(self) -> None:
         if self._client is not None:

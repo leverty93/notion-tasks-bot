@@ -117,8 +117,10 @@ class _FakeCompletions:
         item = self.script.pop(0)
         if isinstance(item, Exception):
             raise item
+        if isinstance(item, SimpleNamespace):
+            return item
         msg = SimpleNamespace(content=item)
-        return SimpleNamespace(choices=[SimpleNamespace(message=msg)])
+        return SimpleNamespace(choices=[SimpleNamespace(message=msg)], error=None)
 
 
 def _parser(script: list, models: str) -> LLMParser:
@@ -161,3 +163,31 @@ def test_no_models_configured() -> None:
     assert not p.enabled
     with pytest.raises(LLMError):
         asyncio.run(p.parse("лаба", datetime(2026, 9, 29, 12, 0, tzinfo=TZ)))
+
+
+def _empty_response(error: dict | None = None):
+    """Ответ без choices — так отвечает перегруженный провайдер (ошибка внутри тела)."""
+    return SimpleNamespace(choices=None, error=error)
+
+
+def test_empty_response_falls_back_to_next_model() -> None:
+    script = [_empty_response({"code": 503, "message": "overloaded"}), _raw(title="Лаба")]
+    p = _parser(script, "overloaded/model:free,good/model:free")
+    task, _ = asyncio.run(p.parse("лаба", datetime(2026, 9, 29, 12, 0, tzinfo=TZ)))
+    assert task.title == "Лаба"
+    assert p._client.chat.completions.used == ["overloaded/model:free", "good/model:free"]
+
+
+def test_all_models_empty() -> None:
+    p = _parser([_empty_response(), _empty_response()], "a:free,b:free")
+    with pytest.raises(LLMError):
+        asyncio.run(p.parse("лаба", datetime(2026, 9, 29, 12, 0, tzinfo=TZ)))
+
+
+def test_bad_api_key_does_not_try_other_models() -> None:
+    from openai import AuthenticationError
+
+    p = _parser([_err(AuthenticationError, 401), _raw(title="Лаба")], "a:free,b:free")
+    with pytest.raises(LLMError, match="OPENROUTER_API_KEY"):
+        asyncio.run(p.parse("лаба", datetime(2026, 9, 29, 12, 0, tzinfo=TZ)))
+    assert p._client.chat.completions.used == ["a:free"]
