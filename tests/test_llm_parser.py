@@ -191,3 +191,22 @@ def test_bad_api_key_does_not_try_other_models() -> None:
     with pytest.raises(LLMError, match="OPENROUTER_API_KEY"):
         asyncio.run(p.parse("лаба", datetime(2026, 9, 29, 12, 0, tzinfo=TZ)))
     assert p._client.chat.completions.used == ["a:free"]
+
+
+def test_junk_json_falls_back_to_next_model() -> None:
+    """Пустой {} от первой модели — спрашиваем следующую."""
+    p = _parser(["{}", _raw(title="Лаба")], "sloppy/model:free,good/model:free")
+    task, _ = asyncio.run(p.parse("лаба", datetime(2026, 9, 29, 12, 0, tzinfo=TZ)))
+    assert task.title == "Лаба"
+    assert p._client.chat.completions.used == ["sloppy/model:free", "good/model:free"]
+
+
+def test_all_models_return_junk() -> None:
+    p = _parser(["{}", "не json вовсе"], "a:free,b:free")
+    with pytest.raises(LLMError, match="разобрать текст"):
+        asyncio.run(p.parse("лаба", datetime(2026, 9, 29, 12, 0, tzinfo=TZ)))
+
+
+def test_prompt_forbids_empty_object() -> None:
+    system = build_prompt("x", datetime(2026, 9, 29, 12, 0, tzinfo=TZ))[0]["content"]
+    assert "title заполняй всегда" in system

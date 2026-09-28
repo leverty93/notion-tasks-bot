@@ -62,7 +62,9 @@ def build_prompt(
         f'- "section": ровно одно значение из списка или null: {json.dumps(sections, ensure_ascii=False)}\n'
         '- "notes": доп. детали из сообщения, которых нет в title, или null\n\n'
         "Значения category и section копируй из списков символ в символ, вместе с эмодзи.\n"
-        "Не выдумывай срок, категорию или раздел, если их нельзя понять из текста — ставь null."
+        "Не выдумывай срок, категорию или раздел, если их нельзя понять из текста — ставь null.\n"
+        "title заполняй всегда: если сомневаешься, коротко перескажи сообщение. "
+        "Пустой объект {} возвращать нельзя."
     )
     return [{"role": "system", "content": system}, {"role": "user", "content": text}]
 
@@ -175,6 +177,7 @@ class LLMParser:
             raise LLMError("LLM не настроена (нет OPENROUTER_API_KEY или LLM_MODEL).")
         messages = build_prompt(text, now, categories, sections)
         last: Exception | None = None
+        bad_json = False
 
         for model in self.models:
             try:
@@ -202,11 +205,20 @@ class LLMParser:
                 log.warning("Пустой ответ от %s: %r", model, getattr(resp, "error", None) or resp)
                 last = LLMError(f"пустой ответ от {model}")
                 continue
+            try:
+                result = validate_llm_json(resp.choices[0].message.content, categories, sections)
+            except LLMError as e:
+                # Модель прислала мусор (например, пустой {}) — спросим следующую.
+                log.warning("Некорректный ответ от %s, пробую следующую модель", model)
+                last, bad_json = e, True
+                continue
             if model != self.models[0]:
                 log.info("Ответила запасная модель %s", model)
-            return validate_llm_json(resp.choices[0].message.content, categories, sections)
+            return result
 
-        log.error("Ни одна модель из LLM_MODEL не ответила: %s", ", ".join(self.models))
+        log.error("Ни одна модель из LLM_MODEL не справилась: %s", ", ".join(self.models))
+        if bad_json:
+            raise LLMError("Модели не смогли разобрать текст.") from last
         raise LLMError("Модели сейчас недоступны — попробуй ещё раз или проверь LLM_MODEL.") from last
 
     async def close(self) -> None:
