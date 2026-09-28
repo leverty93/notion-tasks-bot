@@ -68,8 +68,16 @@ Done / Archived), `Категория` (select), `Раздел` (select), `За�
 
 ### OpenRouter
 1. Создай ключ на <https://openrouter.ai/keys> → `OPENROUTER_API_KEY`.
-2. Выбери модель на <https://openrouter.ai/models> и впиши её слаг в `LLM_MODEL`
-   (например, `deepseek/...:free`). Бесплатные модели бывают медленными (20–30 с на ответ).
+2. Выбери модель на <https://openrouter.ai/models> и впиши её слаг в `LLM_MODEL`.
+   Бесплатные модели (`:free`) регулярно исчезают или упираются в общий лимит, поэтому
+   в `LLM_MODEL` можно перечислить несколько через запятую — при ответе 404 или 429
+   бот сам переходит к следующей:
+
+   ```
+   LLM_MODEL=nvidia/nemotron-3-super-120b-a12b:free,dots-studio/dots-3-note-preview:free
+   ```
+
+   Список доступных бесплатных моделей: `curl -s https://openrouter.ai/api/v1/models`.
    Без ключа/модели бот работает, но добавлять задачи можно только через `/add`.
 
 ## 3. Расписание пар

@@ -1,10 +1,14 @@
+import asyncio
 import json
 from datetime import date, datetime
+from types import SimpleNamespace
 
+import httpx
 import pytest
+from openai import NotFoundError, RateLimitError
 
 from bot.config import TZ
-from bot.llm_parser import LLMError, build_prompt, validate_llm_json
+from bot.llm_parser import LLMError, LLMParser, build_prompt, validate_llm_json
 
 
 def _raw(**fields) -> str:
@@ -97,3 +101,63 @@ def test_prompt_contains_date_weekday_and_options() -> None:
     assert "2026-09-19" in system and "суббота" in system
     assert "Инженерная графика" in system and "🔥 Горит сейчас" in system
     assert msgs[1] == {"role": "user", "content": "сдать дз к пятнице"}
+
+
+# ---------- запасные модели ----------
+
+class _FakeCompletions:
+    """Отвечает по сценарию: исключение или текст ответа на каждый вызов."""
+
+    def __init__(self, script: list) -> None:
+        self.script = list(script)
+        self.used: list[str] = []
+
+    async def create(self, model: str, **kwargs):
+        self.used.append(model)
+        item = self.script.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        msg = SimpleNamespace(content=item)
+        return SimpleNamespace(choices=[SimpleNamespace(message=msg)])
+
+
+def _parser(script: list, models: str) -> LLMParser:
+    p = LLMParser("fake-key", "http://localhost", models)
+    p._client = SimpleNamespace(chat=SimpleNamespace(completions=_FakeCompletions(script)))
+    return p
+
+
+def _err(cls, status: int):
+    resp = httpx.Response(status, request=httpx.Request("POST", "http://localhost"))
+    return cls("boom", response=resp, body=None)
+
+
+def test_models_parsed_from_comma_list() -> None:
+    p = LLMParser("k", "http://localhost", " a/one:free , b/two ")
+    assert p.models == ["a/one:free", "b/two"] and p.enabled
+
+
+def test_falls_back_to_next_model_on_404() -> None:
+    p = _parser([_err(NotFoundError, 404), _raw(title="Лаба")], "gone/model:free,good/model:free")
+    task, _ = asyncio.run(p.parse("лаба", datetime(2026, 9, 29, 12, 0, tzinfo=TZ)))
+    assert task.title == "Лаба"
+    assert p._client.chat.completions.used == ["gone/model:free", "good/model:free"]
+
+
+def test_falls_back_on_rate_limit() -> None:
+    p = _parser([_err(RateLimitError, 429), _raw(title="Лаба")], "busy/model:free,good/model:free")
+    task, _ = asyncio.run(p.parse("лаба", datetime(2026, 9, 29, 12, 0, tzinfo=TZ)))
+    assert task.title == "Лаба"
+
+
+def test_all_models_unavailable() -> None:
+    p = _parser([_err(NotFoundError, 404), _err(RateLimitError, 429)], "a:free,b:free")
+    with pytest.raises(LLMError, match="LLM_MODEL"):
+        asyncio.run(p.parse("лаба", datetime(2026, 9, 29, 12, 0, tzinfo=TZ)))
+
+
+def test_no_models_configured() -> None:
+    p = LLMParser("k", "http://localhost", "")
+    assert not p.enabled
+    with pytest.raises(LLMError):
+        asyncio.run(p.parse("лаба", datetime(2026, 9, 29, 12, 0, tzinfo=TZ)))

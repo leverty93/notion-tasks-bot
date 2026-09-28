@@ -6,7 +6,7 @@ import logging
 import re
 from datetime import date, datetime
 
-from openai import AsyncOpenAI, OpenAIError
+from openai import AsyncOpenAI, NotFoundError, OpenAIError, RateLimitError
 from pydantic import BaseModel, ValidationError, field_validator
 
 from bot.config import TZ
@@ -149,9 +149,15 @@ def validate_llm_json(
 
 
 class LLMParser:
+    """В LLM_MODEL можно указать несколько моделей через запятую.
+
+    Бесплатные модели на OpenRouter регулярно исчезают (404) или упираются
+    в общий лимит (429), поэтому при такой ошибке бот берёт следующую из списка.
+    """
+
     def __init__(self, api_key: str | None, base_url: str, model: str | None) -> None:
-        self.enabled = bool(api_key and model)
-        self._model = model
+        self.models = [m.strip() for m in (model or "").split(",") if m.strip()]
+        self.enabled = bool(api_key and self.models)
         self._client = (
             AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=60.0, max_retries=1)
             if self.enabled
@@ -167,20 +173,35 @@ class LLMParser:
     ) -> tuple[NewTask, list[str]]:
         if not self.enabled or self._client is None:
             raise LLMError("LLM не настроена (нет OPENROUTER_API_KEY или LLM_MODEL).")
-        try:
-            resp = await self._client.chat.completions.create(
-                model=self._model,
-                messages=build_prompt(text, now, categories, sections),
-                response_format={"type": "json_object"},
-                temperature=0,
-            )
-        except OpenAIError as e:
-            log.error("Ошибка LLM: %s: %s", type(e).__name__, e)
-            raise LLMError("LLM недоступна.") from e
-        if not resp.choices or not resp.choices[0].message.content:
-            log.warning("Пустой ответ LLM: %r", resp)
-            raise LLMError("LLM вернула пустой ответ.")
-        return validate_llm_json(resp.choices[0].message.content, categories, sections)
+        messages = build_prompt(text, now, categories, sections)
+        last: Exception | None = None
+
+        for model in self.models:
+            try:
+                resp = await self._client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    response_format={"type": "json_object"},
+                    temperature=0,
+                )
+            except (NotFoundError, RateLimitError) as e:
+                # Модель пропала или занята — пробуем следующую из списка.
+                log.warning("Модель %s недоступна (%s), пробую следующую", model, type(e).__name__)
+                last = e
+                continue
+            except OpenAIError as e:
+                log.error("Ошибка LLM (%s): %s: %s", model, type(e).__name__, e)
+                raise LLMError("LLM недоступна.") from e
+
+            if not resp.choices or not resp.choices[0].message.content:
+                log.warning("Пустой ответ LLM (%s): %r", model, resp)
+                raise LLMError("LLM вернула пустой ответ.")
+            if model != self.models[0]:
+                log.info("Ответила запасная модель %s", model)
+            return validate_llm_json(resp.choices[0].message.content, categories, sections)
+
+        log.error("Ни одна модель из LLM_MODEL не ответила: %s", ", ".join(self.models))
+        raise LLMError("Модель недоступна — проверь LLM_MODEL в .env.") from last
 
     async def close(self) -> None:
         if self._client is not None:
